@@ -33,6 +33,29 @@ What are the dropoff taxi zones at the latest dropoff times?
 
 For this part, we will use the [dynamic filter pattern](https://docs.risingwave.com/docs/current/sql-pattern-dynamic-filters/).
 
+
+```sql
+CREATE MATERIALIZED VIEW latest_dropoff_time AS
+    SELECT 
+        tpep_dropoff_datetime AS latest_dropoff_time,
+        taxi_zone.Zone as taxi_zone
+    FROM trip_data
+    JOIN taxi_zone
+        ON trip_data.DOLocationID = taxi_zone.location_id
+    ORDER BY tpep_dropoff_datetime DESC
+    LIMIT 1;
+```
+
+
+```
+dev=> SELECT * FROM latest_dropoff_time; 
+ latest_dropoff_time |   taxi_zone    
+---------------------+----------------
+ 2022-01-03 17:24:54 | Midtown Center
+(1 row)
+```
+
+
 <details>
 <summary>Solution</summary>
 
@@ -68,12 +91,44 @@ Bonus (no marks): Create an MV which can identify anomalies in the data. For exa
 but the max trip time is 10 minutes and 20 minutes respectively.
 
 Options:
-1. Yorkville East, Steinway
+1. **Yorkville East, Steinway**
 2. Murray Hill, Midwood
 3. East Flatbush/Farragut, East Harlem North
 4. Midtown Center, University Heights/Morris Heights
 
 p.s. The trip time between taxi zones does not take symmetricity into account, i.e. `A -> B` and `B -> A` are considered different trips. This applies to subsequent questions as well.
+
+
+```sql
+CREATE MATERIALIZED VIEW drescribe_taxi_zone_trips AS
+    SELECT
+        taxi_zone_pickup.Zone as taxi_zone_pickup,
+        taxi_zone_dropoff.Zone as taxi_zone_dropoff,
+        MAX(tpep_dropoff_datetime - tpep_pickup_datetime) AS max_trip,
+        MIN(tpep_dropoff_datetime - tpep_pickup_datetime) AS min_trip,
+        AVG(tpep_dropoff_datetime - tpep_pickup_datetime) AS avg_trip
+    FROM trip_data
+    JOIN taxi_zone AS taxi_zone_dropoff
+        ON trip_data.DOLocationID = taxi_zone_dropoff.location_id
+    JOIN taxi_zone AS taxi_zone_pickup
+        ON trip_data.PULocationID = taxi_zone_pickup.location_id
+    WHERE tpep_dropoff_datetime >= tpep_pickup_datetime
+    GROUP BY taxi_zone_pickup.Zone, taxi_zone_dropoff.Zone;
+```
+
+```
+dev=> SELECT * 
+dev-> FROM drescribe_taxi_zone_trips 
+dev-> ORDER BY avg_trip DESC
+dev-> LIMIT 1; 
+ taxi_zone_pickup | taxi_zone_dropoff | max_trip | min_trip | avg_trip 
+------------------+-------------------+----------+----------+----------
+ Yorkville East   | Steinway          | 23:59:33 | 23:59:33 | 23:59:33
+(1 row)
+
+```
+
+
 
 ## Question 2
 
@@ -84,6 +139,39 @@ Options:
 2. 3
 3. 10
 4. 1
+
+
+```sql
+CREATE MATERIALIZED VIEW describe_taxi_zone_trips AS
+    SELECT
+        taxi_zone_pickup.Zone as taxi_zone_pickup,
+        taxi_zone_dropoff.Zone as taxi_zone_dropoff,
+        MAX(tpep_dropoff_datetime - tpep_pickup_datetime) AS max_trip,
+        MIN(tpep_dropoff_datetime - tpep_pickup_datetime) AS min_trip,
+        AVG(tpep_dropoff_datetime - tpep_pickup_datetime) AS avg_trip,
+        COUNT(1) AS num_trip
+    FROM trip_data
+    JOIN taxi_zone AS taxi_zone_dropoff
+        ON trip_data.DOLocationID = taxi_zone_dropoff.location_id
+    JOIN taxi_zone AS taxi_zone_pickup
+        ON trip_data.PULocationID = taxi_zone_pickup.location_id
+    WHERE tpep_dropoff_datetime >= tpep_pickup_datetime
+    GROUP BY taxi_zone_pickup.Zone, taxi_zone_dropoff.Zone;
+```
+
+```
+dev=> SELECT * 
+dev-> FROM describe_taxi_zone_trips 
+dev-> ORDER BY avg_trip DESC
+dev-> LIMIT 1; 
+ taxi_zone_pickup | taxi_zone_dropoff | max_trip | min_trip | avg_trip | num_trip 
+------------------+-------------------+----------+----------+----------+----------
+ Yorkville East   | Steinway          | 23:59:33 | 23:59:33 | 23:59:33 |        1
+(1 row)
+
+```
+
+
 
 ## Question 3
 
@@ -98,6 +186,37 @@ NOTE: For this question `17 hours` was picked to ensure we have enough data to w
 
 Options:
 1. Clinton East, Upper East Side North, Penn Station
-2. LaGuardia Airport, Lincoln Square East, JFK Airport
+2. **LaGuardia Airport, Lincoln Square East, JFK Airport**
 3. Midtown Center, Upper East Side South, Upper East Side North
 4. LaGuardia Airport, Midtown Center, Upper East Side North
+
+
+```sql
+CREATE MATERIALIZED VIEW latest_dropoff_interval_17h AS 
+    WITH t AS (
+        SELECT MAX(tpep_pickup_datetime) AS tpep_pickup_datetime
+        FROM trip_data
+    ) 
+    SELECT 
+        taxi_zone_pickup.Zone as taxi_zone_pickup,
+        COUNT(1) AS num_trip
+    FROM t, trip_data
+    JOIN taxi_zone AS taxi_zone_pickup
+        ON trip_data.PULocationID = taxi_zone_pickup.location_id
+    WHERE trip_data.tpep_pickup_datetime >= t.tpep_pickup_datetime - interval '17 hour'
+    GROUP BY taxi_zone_pickup.Zone
+    ORDER BY num_trip DESC;
+```
+
+```
+dev=> SELECT taxi_zone_pickup, num_trip 
+dev-> FROM latest_dropoff_interval_17h
+dev-> ORDER BY num_trip DESC
+dev-> LIMIT 3;
+  taxi_zone_pickup   | num_trip 
+---------------------+----------
+ LaGuardia Airport   |       19
+ JFK Airport         |       17
+ Lincoln Square East |       17
+(3 rows)
+```
